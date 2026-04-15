@@ -1,17 +1,19 @@
 /**
- * Strava hourly sync job.
- * Scheduled: 0 * * * * (top of every hour)
+ * Strava nightly sync job.
+ * Scheduled: 0 3 * * * (03:00 daily)
  *
- * Fetches Strava activities since the last recorded sync timestamp.
- * Before writing each workout, checks against recently-ingested Zepp
- * workouts to avoid duplicates (Zepp is authoritative for overlapping data).
+ * For each new activity since last sync:
+ *   1. GET /activities/{id}          → name, polyline, elevation, pace, cadence, splits
+ *   2. GET /activities/{id}/streams  → elevation + HR + velocity timeseries
+ *   3. POST /health/ingest/workout   → stored in archive with git commit
+ *
+ * Zepp is sole source for daily HR / sleep / HRV / stress — no workouts from Zepp.
+ * Strava is sole source for workouts — no deduplication needed.
  */
 import { logger, sendAlert } from '../lib/logger.js';
 import { ingestWorkout, writeSyncStatus, readSyncStatus } from '../lib/api.js';
-import { getActivitiesAfter } from '../clients/strava.js';
-import { getActivities as getZeppActivities } from '../clients/zepp.js';
-import { filterDuplicates } from '../lib/dedup.js';
-import type { WorkoutIngestPayload, StravaActivity } from '../types/index.js';
+import { getActivitiesAfter, getActivityDetail, getActivityStreams } from '../clients/strava.js';
+import type { WorkoutIngestPayload, WorkoutSplit, StravaActivityDetail, StravaStreams } from '../types/index.js';
 
 const STRAVA_SPORT_MAP: Record<string, string> = {
   Run: 'outdoor_running',
@@ -25,37 +27,68 @@ const STRAVA_SPORT_MAP: Record<string, string> = {
   Yoga: 'yoga',
   Elliptical: 'elliptical',
   Workout: 'workout',
+  Kayaking: 'kayaking',
+  Surfing: 'surfing',
 };
 
-function buildWorkoutPayload(activity: StravaActivity): WorkoutIngestPayload {
-  const type =
-    STRAVA_SPORT_MAP[activity.sport_type] ??
-    STRAVA_SPORT_MAP[activity.type] ??
-    activity.sport_type.toLowerCase();
+function normaliseType(detail: StravaActivityDetail): string {
+  return (
+    STRAVA_SPORT_MAP[detail.sport_type] ??
+    STRAVA_SPORT_MAP[detail.type] ??
+    detail.sport_type.toLowerCase().replace(/\s+/g, '_')
+  );
+}
 
+function mapSplits(stravaSplits: StravaActivityDetail['splits_metric']): WorkoutSplit[] {
+  return stravaSplits.map((s) => ({
+    split: s.split,
+    distance_m: s.distance,
+    elapsed_time_s: s.elapsed_time,
+    elevation_diff_m: s.elevation_difference,
+    avg_speed_mps: s.average_speed,
+    avg_hr: s.average_heartrate ?? null,
+    pace_zone: s.pace_zone ?? null,
+  }));
+}
+
+function mapStreams(streams: StravaStreams): WorkoutIngestPayload['streams'] {
   return {
-    id: `strava-${activity.id}`,
-    source: 'strava',
-    start: activity.start_date,
-    duration_seconds: activity.elapsed_time,
-    type,
-    distance_km: activity.distance > 0 ? activity.distance / 1000 : undefined,
-    avg_hr: activity.average_heartrate ?? undefined,
-    max_hr: activity.max_heartrate ?? undefined,
-    calories: activity.calories ?? undefined,
+    time: streams['time']?.data ?? [],
+    altitude: streams['altitude']?.data,
+    heartrate: streams['heartrate']?.data,
+    velocity_smooth: streams['velocity_smooth']?.data,
   };
 }
 
-function nDaysAgo(n: number): string {
-  const d = new Date();
-  d.setUTCDate(d.getUTCDate() - n);
-  return d.toISOString().slice(0, 10);
+function buildPayload(
+  detail: StravaActivityDetail,
+  streams: StravaStreams | null,
+): WorkoutIngestPayload {
+  return {
+    id: `strava-${detail.id}`,
+    source: 'strava',
+    start: detail.start_date,
+    duration_seconds: detail.elapsed_time,
+    type: normaliseType(detail),
+    name: detail.name,
+    description: detail.description ?? null,
+    distance_km: detail.distance > 0 ? detail.distance / 1000 : null,
+    avg_hr: detail.average_heartrate ?? null,
+    max_hr: detail.max_heartrate ?? null,
+    calories: detail.calories ?? null,
+    avg_speed_mps: detail.average_speed ?? null,
+    elevation_gain_m: detail.total_elevation_gain ?? null,
+    avg_cadence: detail.average_cadence ?? null,
+    avg_watts: (detail.device_watts && detail.average_watts) ? detail.average_watts : null,
+    polyline: detail.map?.summary_polyline ?? null,
+    splits_km: mapSplits(detail.splits_metric ?? []),
+    streams: streams ? mapStreams(streams) : undefined,
+  };
 }
 
 export async function runStravaJob(): Promise<void> {
   logger.info('Strava job start');
 
-  // Determine cutoff: use last Strava sync timestamp, or fall back to 48h ago
   let afterUnix: number;
   try {
     const status = await readSyncStatus();
@@ -64,59 +97,51 @@ export async function runStravaJob(): Promise<void> {
       : Math.floor(Date.now() / 1000) - 48 * 3600;
   } catch {
     afterUnix = Math.floor(Date.now() / 1000) - 48 * 3600;
-    logger.warn('Strava: could not read sync status, defaulting to 48h window');
+    logger.warn('Strava: could not read sync status — defaulting to 48h window');
   }
 
   let ingested = 0;
-  let skipped = 0;
   const errors: string[] = [];
 
   try {
-    const stravaActivities = await getActivitiesAfter(afterUnix);
-    if (stravaActivities.length === 0) {
+    const activities = await getActivitiesAfter(afterUnix);
+
+    if (activities.length === 0) {
       logger.info('Strava job: no new activities');
       await writeSyncStatus({ strava: new Date().toISOString() });
       return;
     }
 
-    // Fetch Zepp workouts for the same window for dedup
-    const from = nDaysAgo(3);
-    const to = nDaysAgo(0);
-    let zeppWorkouts: WorkoutIngestPayload[] = [];
-    try {
-      const zeppActivities = await getZeppActivities(from, to);
-      zeppWorkouts = zeppActivities.map((a) => ({
-        id: `zepp-${a.trackId}`,
-        source: 'zepp',
-        start: new Date(a.startTime).toISOString(),
-        duration_seconds: Math.round((a.endTime - a.startTime) / 1000),
-        type: 'unknown',
-      }));
-    } catch (err) {
-      logger.warn(
-        'Strava: failed to fetch Zepp activities for dedup — proceeding without dedup',
-        err instanceof Error ? err.message : err,
-      );
-    }
-
-    const stravaPayloads = stravaActivities.map(buildWorkoutPayload);
-    const toIngest = filterDuplicates(stravaPayloads, zeppWorkouts);
-    skipped = stravaPayloads.length - toIngest.length;
-
-    for (const payload of toIngest) {
+    for (const activity of activities) {
       try {
+        // 1. Fetch full detail (polyline, elevation, splits, cadence, watts)
+        const detail = await getActivityDetail(activity.id);
+
+        // 2. Fetch timeseries streams for elevation + HR charts
+        const streams = await getActivityStreams(activity.id);
+
+        // 3. Map and ingest
+        const payload = buildPayload(detail, streams);
         await ingestWorkout(payload);
         ingested++;
+
+        logger.info(`Strava: ingested ${payload.name ?? payload.id}`, {
+          type: payload.type,
+          distance_km: payload.distance_km,
+          polyline: payload.polyline ? `${payload.polyline.length} chars` : 'none',
+          splits: payload.splits_km?.length ?? 0,
+          streams: payload.streams?.time.length ?? 0,
+        });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        errors.push(`${payload.id}: ${msg}`);
-        logger.error('Strava workout ingest error', { id: payload.id, error: msg });
+        errors.push(`${activity.id}: ${msg}`);
+        logger.error('Strava: activity ingest error', { id: activity.id, error: msg });
       }
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     errors.push(`getActivitiesAfter: ${msg}`);
-    logger.error('Strava: failed to fetch activities', msg);
+    logger.error('Strava: failed to fetch activity list', msg);
   }
 
   if (errors.length === 0) {
@@ -126,12 +151,10 @@ export async function runStravaJob(): Promise<void> {
       logger.warn('Strava: failed to write sync status', err instanceof Error ? err.message : err);
     }
   } else {
-    const summary = `Strava job finished with ${errors.length} error(s): ${errors.slice(0, 3).join('; ')}`;
+    const summary = `Strava job: ${errors.length} error(s): ${errors.slice(0, 3).join('; ')}`;
     logger.error(summary);
     await sendAlert(`⚠️ [pcblueprint-sync] ${summary}`);
   }
 
-  logger.info(
-    `Strava job done: ${ingested} ingested, ${skipped} deduped/skipped, ${errors.length} errors`,
-  );
+  logger.info(`Strava job done: ${ingested} ingested, ${errors.length} errors`);
 }
