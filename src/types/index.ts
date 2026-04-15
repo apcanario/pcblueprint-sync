@@ -9,9 +9,9 @@ export interface SleepStages {
 
 export interface DailyIngestPayload {
   date: string;           // YYYY-MM-DD
-  source: string;         // 'zepp' | 'strava' | 'coros'
+  source: string;         // 'zepp'
   sleep?: {
-    sleep_start?: string; // ISO8601
+    sleep_start?: string;
     sleep_end?: string;
     duration_hours?: number;
     duration_minutes?: number;
@@ -25,6 +25,7 @@ export interface DailyIngestPayload {
     max_hr_bpm?: number;
     readings_count?: number;
     hrv_ms?: number;
+    stress_score?: number;  // Zepp daily stress (0–100)
   };
   activity?: {
     steps?: number;
@@ -33,27 +34,42 @@ export interface DailyIngestPayload {
   };
 }
 
-export interface TrackPoint {
-  time: string;           // ISO8601
-  lat?: number;
-  lng?: number;
-  altitude_m?: number;
-  hr?: number;
-  cadence?: number;
-  power_w?: number;
+export interface WorkoutSplit {
+  split: number;
+  distance_m: number;
+  elapsed_time_s: number;
+  elevation_diff_m: number;
+  avg_speed_mps: number;
+  avg_hr: number | null;
+  pace_zone: number | null;
 }
 
 export interface WorkoutIngestPayload {
-  id: string;             // idempotency key (source-native ID)
-  source: string;         // 'zepp' | 'strava'
-  start: string;          // ISO8601
+  id: string;               // 'strava-{id}'
+  source: string;           // 'strava' | 'coros'
+  start: string;            // ISO8601
   duration_seconds: number;
-  type: string;           // sport type
-  distance_km?: number;
-  avg_hr?: number;
-  max_hr?: number;
-  calories?: number;
-  trackpoints?: TrackPoint[];
+  type: string;             // normalised sport type
+  name?: string | null;
+  description?: string | null;
+  distance_km?: number | null;
+  avg_hr?: number | null;
+  max_hr?: number | null;
+  calories?: number | null;
+  avg_speed_mps?: number | null;
+  elevation_gain_m?: number | null;
+  avg_cadence?: number | null;
+  avg_watts?: number | null;
+  polyline?: string | null;
+  splits_km?: WorkoutSplit[];
+  streams?: WorkoutStreams;
+}
+
+export interface WorkoutStreams {
+  time: number[];           // seconds from start
+  altitude?: number[];      // metres ASL
+  heartrate?: number[];     // bpm
+  velocity_smooth?: number[]; // m/s
 }
 
 export interface SyncStatus {
@@ -61,49 +77,78 @@ export interface SyncStatus {
   strava: string | null;
 }
 
-// ── Zepp API response shapes (subset used by our client) ────────────────────
+// ── Zepp API response shapes ───────────────────────────────────────────────────
 
 export interface ZeppDailySummary {
-  date: string;           // YYYYMMDD
+  date: string;             // YYYYMMDD
   steps?: number;
   calories?: number;
-  distance?: number;      // metres
-  sleepDuration?: number; // minutes
-  deepSleep?: number;     // minutes
+  distance?: number;        // metres
+  sleepDuration?: number;   // minutes
+  deepSleep?: number;       // minutes
   lightSleep?: number;
   remSleep?: number;
   awakeDuration?: number;
-  sleepStart?: number;    // unix ms
+  sleepStart?: number;      // unix ms
   sleepEnd?: number;
   restingHeartRate?: number;
   avgHeartRate?: number;
   minHeartRate?: number;
   maxHeartRate?: number;
-  hrv?: number;           // ms
+  hrv?: number;             // ms
+  stress?: number;          // 0–100 daily average stress
 }
 
-export interface ZeppActivity {
-  trackId: string;
-  startTime: number;      // unix ms
-  endTime: number;
-  type: number;           // sport type code
-  calories: number;
-  distance: number;       // metres
-  avgHeartRate: number;
-  maxHeartRate: number;
-}
-
-// ── Strava API response shapes (subset) ──────────────────────────────────────
+// ── Strava API response shapes ─────────────────────────────────────────────
 
 export interface StravaActivity {
   id: number;
   name: string;
   type: string;
   sport_type: string;
-  start_date: string;     // ISO8601
-  elapsed_time: number;   // seconds
-  distance: number;       // metres
+  start_date: string;       // ISO8601
+  elapsed_time: number;     // seconds
+  distance: number;         // metres
   average_heartrate?: number;
   max_heartrate?: number;
   calories?: number;
 }
+
+export interface StravaSplit {
+  split: number;
+  distance: number;         // metres
+  elapsed_time: number;     // seconds
+  elevation_difference: number; // metres
+  moving_time: number;
+  average_speed: number;    // m/s
+  average_heartrate?: number;
+  pace_zone?: number;
+}
+
+export interface StravaMap {
+  id: string;
+  summary_polyline: string;
+  polyline?: string;
+}
+
+export interface StravaActivityDetail extends StravaActivity {
+  description?: string;
+  total_elevation_gain: number;
+  average_speed: number;    // m/s
+  max_speed: number;
+  average_cadence?: number;
+  average_watts?: number;
+  device_watts?: boolean;
+  map: StravaMap;
+  splits_metric: StravaSplit[];
+}
+
+export interface StravaStreamEntry {
+  type: string;
+  data: number[];
+  series_type: string;
+  original_size: number;
+  resolution: string;
+}
+
+export type StravaStreams = Record<string, StravaStreamEntry>;
