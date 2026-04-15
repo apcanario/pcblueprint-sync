@@ -2,8 +2,8 @@
  * pcblueprint-sync — cron entry point
  *
  * Schedules:
- *   0 3 * * *  — Zepp nightly sync (last 3 days, idempotent)
- *   0 * * * *  — Strava hourly incremental sync
+ *   0 11 * * *  — Zepp mid-morning sync (HRV calculated by app after wake)
+ *   0 3  * * *  — Strava nightly sync (once daily is enough)
  *
  * This process exposes no inbound ports. Credentials are read from
  * environment variables (mount .env mode 0600 at runtime).
@@ -43,19 +43,20 @@ function main(): void {
   validateEnv();
   logger.info('pcblueprint-sync starting up');
 
-  // Zepp nightly — 03:00 every day
-  cron.schedule('0 3 * * *', () => {
+  // Zepp mid-morning — 11:00 daily
+  // By this time the Zepp app has had time to calculate HRV and sync overnight data.
+  cron.schedule('0 11 * * *', () => {
     void safeRun('Zepp', runZeppJob);
   });
 
-  // Strava hourly — top of every hour
-  cron.schedule('0 * * * *', () => {
+  // Strava nightly — 03:00 daily
+  // One pull per day is sufficient for 1–2 training sessions.
+  cron.schedule('0 3 * * *', () => {
     void safeRun('Strava', runStravaJob);
   });
 
-  logger.info('Cron jobs registered: Zepp @ 03:00, Strava @ every :00');
+  logger.info('Cron jobs registered: Zepp @ 11:00, Strava @ 03:00');
 
-  // Keep the process alive
   process.on('SIGTERM', () => {
     logger.info('SIGTERM received — shutting down gracefully');
     process.exit(0);
