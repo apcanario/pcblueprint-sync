@@ -1,0 +1,8 @@
+services:
+  pcblueprint-sync:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    # No inbound ports exposed — egress only
+    network_mode: host
