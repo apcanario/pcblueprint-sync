@@ -2,6 +2,11 @@
 
 All notable changes to pcblueprint-sync.
 
+## [2026-04-24] — S04d (CLAUDE.md Operating Rules)
+
+### Changed
+- Added *Working with Claude — Operating Rules* section to `CLAUDE.md` (same content landed across the 4-repo batch: api, archive, website, sync). Codifies: never paste secret values into chat/PRs (variable-name-only); don't modify `package-lock.json` (defer drift to a dedicated PR); `vi.mock` factory pattern for PATHS-aligned route tests; docs-only pushes no longer trigger Docker rebuilds on the api side
+
 ## [2026-04-15] — Initial release
 
 ### Added
