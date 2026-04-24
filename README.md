@@ -21,21 +21,37 @@ Docker cron container that pulls fitness data from Zepp and Strava and writes it
 
 ## Setup
 
-### 1. Clone onto the NAS
+Deployed on the NAS as an image pulled from `ghcr.io/apcanario/pcblueprint-sync:latest` — same pattern as `pcblueprint-api`. No source tree on the NAS; Watchtower pulls new images automatically after every merge to `main`.
+
+### 1. Create the compose directory on the NAS
 
 ```bash
-git clone https://github.com/apcanario/pcblueprint-sync /volume1/pcblueprint-sync
-cd /volume1/pcblueprint-sync
-cp .env.example .env
-chmod 600 .env
+ssh apcanario@192.168.1.69
+mkdir -p /volume2/docker/sync
+cd /volume2/docker/sync
 ```
 
-### 2. Fill in `.env`
+### 2. Drop in `compose.yaml`
+
+```yaml
+services:
+  pcblueprint-sync:
+    image: ghcr.io/apcanario/pcblueprint-sync:latest
+    container_name: pcblueprint-sync
+    restart: unless-stopped
+    env_file: .env
+```
+
+No inbound ports — the worker only makes outbound HTTP calls to Zepp, Strava, and the api container.
+
+### 3. Create `.env` from the template
+
+Copy the block below into `/volume2/docker/sync/.env` and fill in the values. Mode `0600`, never committed.
 
 ```env
 # pcblueprint-api
 API_URL=http://pcblueprint-api:3001
-API_TOKEN=<same value as API_KEY in pcblueprint.env>
+API_TOKEN=<same value as API_KEY in /volume2/docker/api/compose.yaml>
 
 # Zepp/Amazfit
 ZEPP_EMAIL=your@gmail.com
@@ -51,7 +67,11 @@ STRAVA_REFRESH_TOKEN=<one-time OAuth flow — see below>
 ALERT_WEBHOOK_URL=
 ```
 
-### 3. Get a Strava refresh token (one-time)
+```bash
+chmod 600 .env
+```
+
+### 4. Get a Strava refresh token (one-time)
 
 1. Create an API app at [strava.com/settings/api](https://www.strava.com/settings/api)
 2. Open this URL in a browser (replace `YOUR_CLIENT_ID`):
@@ -69,15 +89,33 @@ ALERT_WEBHOOK_URL=
    ```
 5. Copy `refresh_token` from the response into `.env` — it never expires unless you revoke it
 
-### 4. Set a Zepp password
+### 5. Set a Zepp password
 
 Zepp app → Profile tab → your avatar → Account Security → **Set Password**.
 
 You can set a password even if you signed up with Google. Use your Google email as `ZEPP_EMAIL`.
 
-### 5. Start the container
+### 6. Add the container to Watchtower's watch list
+
+Watchtower runs alongside the api under `/volume2/docker/api/compose.yaml`. Append `pcblueprint-sync` to its `command:` so updates are auto-pulled:
+
+```yaml
+  watchtower:
+    # ...
+    command: pcblueprint-api pcblueprint-sync
+```
+
+Restart the api stack so Watchtower picks up the change:
 
 ```bash
+cd /volume2/docker/api
+docker compose up -d
+```
+
+### 7. Start the sync container
+
+```bash
+cd /volume2/docker/sync
 docker compose up -d
 ```
 
@@ -147,10 +185,14 @@ Sync timestamps are visible on the website dashboard (Data Sources badges).
 
 ## Updating
 
+Automatic via Watchtower (polls `ghcr.io` every 300s). After a merge to `main`, the GitHub Actions workflow publishes a new `:latest` image, Watchtower pulls it on the next tick, and the container restarts.
+
+To force an immediate pull without waiting for the poll:
+
 ```bash
-cd /volume1/pcblueprint-sync
-git pull origin main
-docker compose up -d --build
+ssh apcanario@192.168.1.69
+cd /volume2/docker/sync
+docker compose pull && docker compose up -d
 ```
 
 ---

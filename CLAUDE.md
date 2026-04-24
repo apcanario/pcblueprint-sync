@@ -9,8 +9,8 @@ Cron Docker container that writes Zepp and Strava data to pcblueprint-api. No LL
 - **NAS**: Synology DS423+ at `192.168.1.69`, username `apcanario`
 - **SSH**: `ssh apcanario@192.168.1.69` from PowerShell
 - **NAS shell**: bash (once SSHed in)
-- **Sync path on NAS**: `/volume1/pcblueprint-sync`
-- **Env file**: `/volume1/pcblueprint-sync/.env` (mode 0600, never committed)
+- **Deployment on NAS**: image from `ghcr.io/apcanario/pcblueprint-sync:latest` (no source tree on NAS). Compose config lives at `/volume2/docker/sync/compose.yaml`; Watchtower (running next to the api at `/volume2/docker/api/compose.yaml`) auto-pulls new images
+- **Env file**: `/volume2/docker/sync/.env` (mode 0600, never committed)
 
 ## Architecture
 
@@ -71,13 +71,21 @@ runZeppJob().catch(console.error);
 
 ## Deployment (NAS)
 
+Image-based, no source tree on NAS. After merging a PR to `main`:
+
+1. GitHub Actions builds and pushes `ghcr.io/apcanario/pcblueprint-sync:latest`
+2. Watchtower (in the api compose stack, polling every 300s) pulls the new image
+3. Container restarts automatically
+
+For a forced immediate pull without waiting for Watchtower's poll:
+
 ```bash
-cd /volume1/pcblueprint-sync
-git pull origin main
-docker compose up -d --build
+ssh apcanario@192.168.1.69
+cd /volume2/docker/sync
+docker compose pull && docker compose up -d
 ```
 
-Watchtower handles automatic image updates when a new image is pushed to ghcr.io after a merge to `main`.
+First-time deployment steps live in the README Setup section.
 
 ## Monitoring
 
