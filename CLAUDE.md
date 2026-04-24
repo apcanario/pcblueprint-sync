@@ -95,6 +95,14 @@ Sync timestamps appear on the pcblueprint-website dashboard (Data Sources card).
 - Do NOT add deduplication between Zepp/Strava — they handle different data types
 - Do NOT modify the cron schedule without understanding the Zepp HRV calculation window (11:00 is after overnight HRV processing)
 
+## Working with Claude — Operating Rules
+
+- Never paste discovered secret values (API keys, tokens, passwords) into chat responses or PR descriptions. Reference by variable name only (e.g. "the API_KEY env var"), never the value itself.
+- When investigating env/config, prefer variable-name-only output. If a value must be revealed to answer a question, warn the user first and confirm before showing it.
+- Do not modify package-lock.json. If npm install drifts the lockfile, discard (git checkout --) rather than commit — pre-existing lockfile drift is being resolved separately in S04h.
+- When realigning routes to PATHS constants (S04a/S04b pattern), update vi.mock('../services/fileService', ...) factories in the matching test file(s) to spread the actual module first (so PATHS and helpers stay defined), then override only the disk-touching fns (readJson, writeJson, readMarkdown, appendMarkdown, writeMarkdown, appendCsvRow).
+- Docs-only pushes (changes confined to **/*.md, LICENSE, .gitignore) no longer trigger Docker rebuilds — don't wait for a deploy notification after a pure docs PR.
+
 ## Working with Claude — Session Rules
 
 **Break work into small chunks.** Each task block should be completable in under 5 minutes.
