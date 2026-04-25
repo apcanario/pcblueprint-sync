@@ -11,7 +11,7 @@ import https from 'https';
 import http from 'http';
 import { URL } from 'url';
 import { logger } from '../lib/logger.js';
-import type { ZeppDailySummary, ZeppActivity } from '../types/index.js';
+import type { ZeppDailySummary } from '../types/index.js';
 
 const REGION = (process.env.ZEPP_REGION ?? 'eu').toLowerCase();
 const EMAIL = process.env.ZEPP_EMAIL ?? '';
@@ -187,39 +187,3 @@ export async function getDailySummaries(
   });
 }
 
-interface ZeppActivityListResponse {
-  data?: {
-    items?: ZeppActivity[];
-  };
-}
-
-/**
- * Fetch the list of activities (workouts) for a date range.
- * @param fromDate YYYY-MM-DD
- * @param toDate   YYYY-MM-DD
- */
-export async function getActivities(
-  fromDate: string,
-  toDate: string,
-): Promise<ZeppActivity[]> {
-  const token = await getToken();
-  const from = new Date(fromDate).getTime();
-  const to = new Date(toDate + 'T23:59:59Z').getTime();
-
-  const { status, data } = await request<ZeppActivityListResponse>({
-    hostname: DATA_HOST[REGION] ?? DATA_HOST['eu'],
-    path: `/api/v7/sport/lastSportsList?device_type=all&from_time=${from}&to_time=${to}&type=all`,
-    method: 'GET',
-    headers: { apptoken: token.appToken },
-  });
-
-  if (status === 401) {
-    tokenCache = null;
-    throw new Error('Zepp: 401 on activities fetch');
-  }
-  if (status !== 200) {
-    throw new Error(`Zepp activities fetch failed (HTTP ${status})`);
-  }
-
-  return data.data?.items ?? [];
-}
