@@ -73,8 +73,8 @@ runZeppJob().catch(console.error);
 
 Image-based, no source tree on NAS. After merging a PR to `main`:
 
-1. GitHub Actions builds and pushes `ghcr.io/apcanario/pcblueprint-sync:latest`
-2. Watchtower (in the api compose stack, polling every 300s) pulls the new image
+1. GitHub Actions (`.github/workflows/publish.yml`) builds and pushes `ghcr.io/apcanario/pcblueprint-sync:latest` (multi-arch `linux/amd64,linux/arm64`, also tagged `sha-<short>`); skipped for docs-only changes via `paths-ignore`
+2. Watchtower (in the api compose stack at `/volume2/docker/api/compose.yaml`, polling every 300s) pulls the new image — requires `pcblueprint-sync` in its `command:` list
 3. Container restarts automatically
 
 For a forced immediate pull without waiting for Watchtower's poll:

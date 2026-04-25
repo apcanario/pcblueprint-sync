@@ -2,6 +2,17 @@
 
 All notable changes to pcblueprint-sync.
 
+## [2026-04-25] — S06b — Sync Worker Containerise + Deploy
+
+### Added
+- `.github/workflows/publish.yml` — builds + pushes `ghcr.io/apcanario/pcblueprint-sync` to GHCR on every merge to `main`. Multi-arch (`linux/amd64,linux/arm64`), tagged `:latest` + `:sha-<short>`, GHCR creds from `GITHUB_TOKEN`, gha cache. Mirrors `pcblueprint-api/.github/workflows/docker.yml` exactly. Docs-only pushes (`**/*.md`, `LICENSE`, `.gitignore`) skipped via `paths-ignore`.
+
+### Changed
+- `CLAUDE.md` Deployment section now names the workflow file and the multi-arch tags, and notes that Watchtower needs `pcblueprint-sync` in its `command:` list to pick up new images.
+
+### Increment
+*Pedro can now merge to `pcblueprint-sync/main` and within ~3 minutes there's a fresh `ghcr.io/apcanario/pcblueprint-sync:latest` image waiting for Watchtower to pull. The README's Setup section, which has described this deploy path since 2026-04-25 morning, is no longer aspirational — the workflow that backs it now exists. Two steps still need Pedro's hands on the NAS: appending `pcblueprint-sync` to Watchtower's `command:` list in `/volume2/docker/api/compose.yaml`, and creating `/volume2/docker/sync/{compose.yaml,.env}` then `docker compose up -d` to start the container for the first time. After that, every subsequent code change ships hands-free.*
+
 ## [2026-04-24] — S04d (CLAUDE.md Operating Rules)
 
 ### Changed
